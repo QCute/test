@@ -1,0 +1,11 @@
+{application, poolboy, [
+    {description, "A hunky Erlang worker pool factory"},
+    {vsn, "1.5.1"},
+    {applications, [kernel, stdlib]},
+    {registered, [poolboy]},
+    {modules, []},
+
+    {maintainers, ["Devin Torres", "Andrew Thompson", "Kurt Williams"]},
+    {licenses, ["Unlicense", "Apache 2.0"]},
+    {links, [{"GitHub", "https://github.com/devinus/poolboy"}]}
+]}.

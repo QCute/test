@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+_complete() {
+    echo "COMP_WORDS <<${COMP_WORDS}>>"
+    echo "COMP_CWORD <<${COMP_CWORD}>>"
+    echo "COMP_LINE <<${COMP_LINE}>>"
+}
+
+complete -F _complete mm

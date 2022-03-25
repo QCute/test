@@ -1,0 +1,22 @@
+使用\n作为换行!!!!!!!!
+
+处理模块需要实现-behaviour(houtai_handler).
+下面函数供record_server使用,匹配某个记录的某个字段的某个数据的别名
+record_server_field_try_fetch_name(_RecordName, FiledName,FieldData)
+
+开启服务器前
+更新数据库
+开启服务器
+点'更新代码'
+
+目前的shang_handler
+    需要不定时更新
+    get_pp_name        用于匹配tracer_server的函数名
+
+    迁移时需要更改
+    shang.hrl
+
+    增加新指令更改
+    do_spawn_link_handler
+    指令(信息)由;;;分割
+    返回的是io_data()

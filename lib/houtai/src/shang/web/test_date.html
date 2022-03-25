@@ -1,0 +1,201 @@
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Websocket client</title>
+    <script src="https://cdn.bootcss.com/jquery/1.10.2/jquery.min.js"></script>
+    <script type="text/javascript">
+
+        var websocket;
+        $(document).ready(init);
+
+        function init() {
+            $('#server').val("ws://" + window.location.host + "/shang_ws");
+            if (!("WebSocket" in window)) {
+                $('#status').append('<p><span style="color: red;">websockets are not supported </span></p>');
+                $("#navigation").hide();
+            } else {
+                $('#status').append('<p><span style="color: green;">websockets are supported </span></p>');
+                connect();
+            }
+            ;
+        }
+        ;
+
+        function connect() {
+                wsHost = $("#server").val()
+                websocket = new WebSocket(wsHost);
+                showScreen('Connecting to: ' + wsHost);
+                websocket.onopen = function (evt) {
+                    onOpen(evt)
+                };
+                websocket.onclose = function (evt) {
+                    onClose(evt)
+                };
+                websocket.onmessage = function (evt) {
+                    onMessage(evt)
+                };
+                websocket.onerror = function (evt) {
+                    onError(evt)
+                };
+        }
+        ;
+
+        function disconnect() {
+            websocket.close();
+        }
+        ;
+
+        function toggle_connection() {
+            if (websocket.readyState == websocket.OPEN) {
+                disconnect();
+            } else {
+                connect();
+            }
+            ;
+        }
+        ;
+        function hidden_send(){
+            if($('#hidden_send').val()=="hidden"){
+                $('#hidden_send_but').val("隐藏发送的信息");
+                $('#hidden_send').val("show");
+            }else{
+                $('#hidden_send_but').val("显示发送的信息");
+                $('#hidden_send').val("hidden");
+            }
+        }
+
+        function sendTxt(txt) {
+            if (websocket.readyState == websocket.OPEN) {
+                websocket.send(txt);
+                if ($('#hidden_send').val() == "show") {
+                    showScreen('send: \n' + txt);
+                }
+            } else {
+                showScreen('websocket is not connected');
+            }
+        }
+        ;
+
+        function onOpen(evt) {
+            $('#connect_btn').val("disconnect");
+            showScreen('CONNECTED');
+        }
+        ;
+
+        function onClose(evt) {
+            $('#connect_btn').val("connect");
+            showScreen('DISCONNECTED');
+        }
+        ;
+
+        function onMessage(evt) {
+            showScreen('RESPONSE: \n' + evt.data);
+        }
+        ;
+
+        function onError(evt) {
+            showScreen('ERROR: \n' + evt.data);
+        }
+        ;
+
+        function showScreen(txt) {
+//            $('#ret').text($('#ret').text() + txt + "\n\n");
+            var ret = $('#ret');
+            ret.val(ret.val() + txt + "\n\n");
+            ret.scrollTop(ret[0].scrollHeight - ret.height());
+        }
+        ;
+    </script>
+
+    <style>
+        body{
+            width: 100%;
+            height: 100%;
+            margin: 0px;
+        }
+        p{
+            margin: 0px;
+        }
+        input{
+            width: auto;
+        }
+        #header{
+            width: 100%;
+            height: 10%;
+        }
+        #navigation{
+            width: 100%;
+            height: 90%;
+        }
+        #button_text{
+            width: 100%;
+            height: auto;
+        }
+        #context{
+            width: 100%;
+            height: auto;
+        }
+        #context_send_div{
+            width: 20%;
+            height: 100%;
+            float: left;
+        }
+        #context_return_div{
+              width: 80%;
+              height: 100%;
+              float: left;
+          }
+        #send,#ret{
+            width: 95%;
+            height: 70%;
+            overflow:auto;
+        }
+    </style>
+</head>
+
+<body>
+<div id="header">
+    <h1>Websocket client</h1>
+
+    <div id="status"></div>
+</div>
+
+
+<div id="navigation">
+
+    <div id="button_text">
+        <input  type='hidden' id="server" value="">
+        <input id="connect_btn" type="button" onclick="toggle_connection()" value="connection">
+        <input id="hidden_send"  type="hidden" value="hidden">
+        </br>
+        </br>
+        ============== 等待返回信息再进行下一次操作!!! =============
+        </br>
+        </br>
+        <button id="stop_btn" type="button" onclick=(function(){sendTxt("stop");})()>关闭</button>
+        <button id="start_btn" type="button" onclick=(function(){sendTxt("start;;;"+$('#start_day').val()+";;;"+$('#start_hour').val()+";;;"+$('#start_min').val())})()>开服后开启</button>
+        天:<input id="start_day" type="text" style="width: 50px" value="">
+        时:<input id="start_hour" type="text" style="width: 50px" value="">
+        分:<input id="start_min" type="text" style="width: 50px" value="">
+        <button id="restart_btn" type="button" onclick=(function(){sendTxt("restart");})()>当前时间重启</button>
+        <button id="truncate_btn" type="button" onclick=(function(){sendTxt("truncate");})()>清档</button>
+        <button id="update_btn" type="button" onclick=(function(){sendTxt("update");})()>更新代码</button>
+        <button id="update_time_btn" type="button" onclick=(function(){sendTxt("updateTime");})()>更新时间</button>
+        <button id="shutdown_btn" type="button" onclick=(function(){sendTxt("shutdown");})()>关机</button>
+        <button id="now_time_btn" type="button" onclick=(function(){sendTxt("now");})()>服务器当前时间</button>
+    </div>
+
+    <div id="context">
+        <div id="context_return_div">
+            <p>
+                <button onclick=(function(){$('#ret').val("")})()>Clear Return</button>
+            </p>
+
+            <div>
+                <textarea id="ret" wrap="off"></textarea>
+            </div>
+    </div>
+    </div>
+</div>
+</body>
+</html> 

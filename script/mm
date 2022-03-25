@@ -1,0 +1,663 @@
+#!/usr/bin/env bash
+
+# script=$(dirname "$0")
+# NavigationView(activity_main.xml)
+# app:insetForeground="#00000000"
+
+# add/modify/remove ssh passpahre
+# ssh-keygen -p -f your_private_key_location
+
+# Gate
+# Net/Route/Actor
+# Cluster/RPC/HotReloading
+# Console/Journal/Log
+# DB/Admin
+
+# Mirror Arch:
+# 
+#     Cluster Center Machine | Cluster Node Machine
+#           
+#                            +-- prometheus
+#                            |-- alertmanager
+#                  grafana --|-- node_exporter
+#                            |-- mysqld_exporter
+#                            +-- ...
+#
+# Mirror Arch Compact:
+# 
+#     Cluster Center Machine | Cluster Node Machine
+# 
+#                            +-- node_exporter
+# grafana -- prometheus    --|-- mysqld_exporter
+#            alertmanager    |-- process_exporter
+#                            +-- ...
+#                            
+# 
+
+function fast_mirror() {
+    # slow
+    echo # https://nchc.dl.sourceforge.net/project/.....
+    # fast
+    echo # https://liquidtelecom.dl.sourceforge.net/project/.....
+}
+
+function proxy() {
+    rm -f fifo 
+    mkfifo fifo && nc -lkp 8974  < fifo  | nc -lkp 8998 > fifo
+    rm -f fifo
+    # socat TCP4-LISTEN:8974,reuseaddr,fork TCP4:127.0.0.1:8998
+}
+
+function generate_password() {
+    # generate password
+    head -c 256 /dev/urandom | tr -dc A-Za-z0-9 | head -c 16
+}
+
+function install_git() {
+    [[ "$(whoami)" != "root" ]] && echo "This script must be run as root!" && exit
+    # add user
+    groupadd git
+    useradd git -g git
+    passwd git --stdin
+    su - git
+    # ssh
+    cp -r ~/.ssh ~/../git/
+    chmod 600 -R ~/../git/.ssh/
+    chmod 700 ~/../git/.ssh
+    chowm git:git -R ~/.ssh
+}
+
+# 
+# after dev finished
+# git switch master
+# git pull origin master --rebase
+# git switch dev
+# git rebase master
+# * fix per commit conflict *
+# git switch master
+# git merge dev
+# git push origin master
+# * fix per commit conflict *
+# 
+
+
+# dev(local) -> dev(remote) -> git stash -> git pull(fetch/merge) -> git stash pop (compatible) -> ...
+#                                                                                ↓ (conflict)
+#                                                                                ↓ git checkout --theirs . (use theirs(generated ) configure data)
+#                                                                                ↓ git checkout --ours . (use ours(push) configure data) (not recommend)
+#
+function update_git() {
+    git stash
+    git pull origin dev
+    git stash pop
+    git checkout --theirs .
+}
+
+# ignore change from index
+function ignore_git() {
+    git update-index --assume-unchanged "$*"
+}
+
+# cancel ignore change from index
+function cannel_ignore_git() {
+    git update-index --no-assume-unchanged "$*"
+}
+
+function install_php() {
+    if [[ -n "$(type dpkg --version)" ]];then
+        # debian
+        sudo wget -O /etc/apt/trusted.gpg.d/php.gpg https://packages.sury.org/php/apt.gpg
+        sudo sh -c 'echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php.list'
+        # ubuntu
+        # sudo apt-key adv --recv-keys --keyserver keyserver.ubuntu.com # "your keys"
+    elif [[ -n "$(type rpm --version)" ]];then
+        # CentOS
+        sudo sed -i "s/rpms\.remirepo\.net/mirrors\.tuna\.tsinghua\.edu.cn\/remi/g" /etc/yum.repos.d/remi*
+        sudo sed -i "s/^#baseurl/baseurl/g" /etc/yum.repos.d/remi*
+    fi
+}
+
+# for erlang install
+function install_need() {
+    if [[ -n $(type apt 2>/dev/null) ]];then
+        # must
+        sudo apt install gcc make libncurses-dev libssl-dev -y
+        # hipe need
+        sudo apt install llvm autoconf m4 -y
+    elif [[ -n $(type dnf 2>/dev/null) ]];then
+        # must
+        sudo dnf install gcc make ncurses-devel openssl-devel -y
+        # hipe need
+        sudo dnf install llvm autoconf m4 -y
+        # optional
+        sudo dnf install epel-release -y
+        sudo dnf install java-11-openjdk-devel unixODBC-devel libxslt-devel -y
+        sudo dnf install wxGTK3-devel gcc-c++ -y
+        # fop
+        version=$(curl -s http://archive.apache.org/dist/xmlgraphics/fop/binaries/ | grep -Po "(?<=fop-).*?(?=-bin\.zip)" | sort -n | tail -n 1)
+        sudo dnf install wget -y
+        wget http://archive.apache.org/dist/xmlgraphics/fop/binaries/fop-"${version}"-bin.tar.gz
+        sudo tar -xf fop-"${version}"-bin.tar.gz -C /usr/local/
+        rm fop-"${version}"-bin.tar.gz
+        sudo ln -s /usr/local/fop-"${version}"/fop/fop /usr/local/bin/fop
+    elif [[ -n $(type yum 2>/dev/null) ]];then
+        # must
+        sudo yum install gcc make ncurses-devel openssl-devel -y
+        # hipe need
+        sudo yum install llvm autoconf m4 -y
+    fi
+}
+
+function build() {
+    # make TYPE=debug FLAVOR=smp
+    cd "$1" || exit
+    # ./configure --enable-kernel-poll --enable-hipe --enable-native-libs --enable-fips --enable-m64-build
+    # stash modified
+    git stash
+    # sync remote 
+    git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    export CFLAGS="-O3 -flto"
+    ./configure --enable-kernel-poll --enable-fips --enable-m64-build --enable-jit --with-dynamic-trace=systemtap
+    make clean
+    make -j "$(grep -c "processor" /proc/cpuinfo)"
+    [[ $? -gt 0 ]] && exit $?
+    # strip
+    find ./bin/ -type f -exec file {} \; | grep "not stripped" | awk -F ":" '{print $1}' | xargs -n 1 strip
+    # reaplace Install script FINAL ROOT DIR
+    sed -i "s/\"s;%FINAL_ROOTDIR%;\$TARGET_ERL_ROOT;\"/\"s;%FINAL_ROOTDIR%;\\\\\$(dirname \\\\\$(dirname \\\\\$(readlink -f \\\\\$0)));\"/" ./erts/etc/common/Install
+}
+
+function debug() {
+    make -j "$(grep -c "processor" /proc/cpuinfo)" TYPE=debug FLAVOR=smp 
+    # debug for vscode
+    ### launch.json ###
+    # "program": "${workspaceRoot}/bin/x86_64-pc-linux-gnu/beam.debug.smp",
+    # "args": ["--", "-root", "${workspaceRoot}", "-progname", "${workspaceRoot}/bin/cerl", "-debug", "--", "-home", "${HOME}", "--"],
+    # "environment": [{ "name": "BINDIR", "value": "${workspaceRoot}/bin/x86_64-pc-linux-gnu" }],
+    ### tasks.json ###
+    # "label": "build"
+    # "command": "make TYPE=debug FLAVOR=smp"
+    # ./bin/cerl -debug -gdb -break main
+}
+
+function tap() {
+    path=$(dirname $(dirname $(whereis erl | awk '{print $2}')))
+    path=$(find "${path}/lib/erlang/" -maxdepth 1 -name "erts-*")
+    stap -L 'process("'"${path}/bin/beam.smp"'").mark("*")'
+    stap $1
+}
+
+function debug_install() {
+    [[ ! -f "./OTP_VERSION" ]] && echo "not otp root" && exit 1
+    mkdir -p .vscode
+    cat > .vscode/launch.json << EOF
+{
+    "version": "2.0.0",
+    "configurations": [
+        {
+            "name": "beam.smp",
+            "preLaunchTask": "build",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "\${workspaceRoot}/bin/x86_64-pc-linux-gnu/beam.debug.smp",
+            "args": ["--", "-root", "\${workspaceRoot}", "-progname", "\${workspaceRoot}/bin/cerl", "-debug", "--", "-home", "\${HOME}", "--", "-name", "debug@127.0.0.1", "-setcookie", "erlang"],
+            "stopAtEntry": false,
+            "cwd": "\${fileDirname}",
+            "environment": [{ "name": "BINDIR", "value": "\${workspaceRoot}/bin/x86_64-pc-linux-gnu" }],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "enable etp commands",
+                    "text": "source ${workspaceRoot}/erts/etc/unix/etp-commands",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "enable pretty print",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ]
+}
+EOF
+    cat > .vscode/tasks.json << EOF
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "make",
+            "args": ["TYPE=debug", "FLAVOR=smp"]
+        }
+    ]
+}
+EOF
+}
+
+
+function install() {
+    # remove old build
+    rm -rf /usr/local/lib/erlang/
+    # install new
+    make install
+}
+
+# find mysql socket
+function mysql_socket() {
+    if [[ -d "/etc/mysql" ]];then
+        socket=$(grep -r "socket\s*=" /etc/mysql/my.cnf 2>/dev/null | head -n 1 | awk '{print $NF}')
+    elif [[ -f "/etc/my.cnf" ]];then
+        socket=$(grep -P "socket\s*=" /etc/my.cnf 2>/dev/null | head -n 1 | sed 's/socket\s*=/-S /')
+    fi
+    if [[ -z "${socket}" ]];then
+        echo "/run/mysqld/mysqld.sock"
+    else 
+        echo "${socket}"
+    fi
+}
+
+# mysql password
+function mysql_password() {
+    whoami
+}
+
+# mysql login
+function mysql_login() {
+    mysql --socket="$(mysql_socket)" --user="$(mysql_password)" --password="$(mysql_password)" "$*"
+}
+
+#         + -- server 1
+# center  | -- server 2
+#         + -- server 3
+# sshfs on center server
+# config/
+#       server-1/*.config
+#       server-2/*.config
+#       server-3/*.config
+# migration
+function mysql_migrate() {
+    # host port user password database
+    [[ -z "$1" ]] && echo "host not set" && exit
+    [[ -z "$2" ]] && echo "port not set" && exit
+    [[ -z "$3" ]] && echo "user not set" && exit
+    [[ -z "$4" ]] && echo "password not set" && exit
+    [[ -z "$5" ]] && echo "database not set" && exit
+    # create database
+    mysql --host="$1" --port="$2" --user="$3" --password="$4" --database="information_schema" --execute="CREATE DATABASE IF NOT EXISTS \`$5\` DEFAULT CHARACTER SET utf8mb4 DEFAULT COLLATE utf8mb4_unicode_ci;"
+    # copy tables and data
+    mysql --socket="$(mysql_socket)" --user="$(whoami)" --password="$(mysql_password)" --database="$5" --execute="show tables" --silent  | while read -r table;do
+        echo "migrate: ${table}"
+        mysqldump --socket="$(mysql_socket)" --user="$(whoami)" --password="$(mysql_password)" --compact --add-drop-table --databases "$5" --tables "${table}" | mysql --host="$1" --port="$2" --user="$3" --password="$4" --database="$5"
+    done
+}
+
+# mysql dump database
+function mysql_dump() {
+    if [[ -z $1 ]];then
+        echo database need
+        return
+    elif [[ -z $2 ]];then
+        echo file need
+        return
+    fi
+    if [[ $3 == data ]];then
+        option="-t"
+    elif [[ $3 == table ]];then
+        option="-d --add-drop-table"
+    elif [[ -z $3 || $3 == all ]];then
+        option="--add-drop-table"
+    else
+        echo "unknown option $3"
+        return
+    fi
+    mysqldump --socket="$(mysql_socket)" --password="$(mysql_password)" ${option} "$1" > "$2"
+}
+
+# mysql export
+function mysql_export() {
+    mkdir -p "$1"
+    cd "$1" || exit
+    mysql --socket="$(mysql_socket)" --password="$(mysql_password)" --database="$1" --execute="show tables" --silent | while read -r table;do
+        mysql --socket="$(mysql_socket)" --password="$(mysql_password)" -t "$1" "${table}" > "${table}.sql"
+    done
+}
+
+# mysql import
+function mysql_import () {
+    cd "$1" || exit
+    find ./*.sql 2>/dev/null | while read -r sql;do
+        echo "import ${sql}.sql"
+        mysql --socket="$(mysql_socket)" --password="$(mysql_password)" --database="$1" < "${sql}"
+    done
+}
+
+# rsync file diff
+function diff() {
+    rsync --recursive --compress --dry-run --checksum --out-format="%n" "$*"
+}
+
+# rsync file diff
+function diff_server() {
+    [[ -z "$1" ]] && echo "Host not set" | sed $'s/.*/\e[31m&\e[m/' >&2 && exit 1
+    [[ -z "$(grep -Po "(?<=\bHost\b)\s*$1" "${HOME}"/.ssh/config)" ]] && echo "Host $1 not found!" | sed $'s/.*/\e[31m&\e[m/' >&2 && exit 1
+    rsync --recursive --compress --dry-run --checksum --out-format="beam/%n" "beam/" "$1:$(pwd)/beam/"
+    rsync --recursive --compress --dry-run --checksum --out-format="script/shell/%n" "script/shell/" "$1:$(pwd)/script/shell/"
+    rsync --recursive --compress --dry-run --checksum --out-format="script/sql/%n" "script/sql/" "$1:$(pwd)/script/sql/"
+    rsync --recursive --compress --dry-run --checksum --out-format="config/app/%n" "config/app/" "$1:$(pwd)/config/app/"
+    rsync --recursive --compress --dry-run --checksum --out-format="config/cert/%n" "config/cert/" "$1:$(pwd)/config/cert/"
+    rsync --recursive --compress --dry-run --checksum --out-format="config/src/%n" --exclude="*.config" "config/src/" "$1:$(pwd)/config/src/"
+}
+
+# rsync file sync
+function sync_server() {
+    [[ -z "$1" ]] && echo "Host not set" | sed $'s/.*/\e[31m&\e[m/' >&2 && exit 1
+    [[ -z "$(grep -Po "(?<=\bHost\b)\s*$1" "${HOME}"/.ssh/config)" ]] && echo "Host $1 not found!" | sed $'s/.*/\e[31m&\e[m/' >&2 && exit 1
+    ssh "$1" mkdir -p "$(pwd)"/beam/
+    # beam/
+    rsync --recursive --update --compress --verbose --out-format="beam/%n" "beam/" "$1:$(pwd)/beam/"
+    # script/shell/
+    ssh "$1" mkdir -p "$(pwd)"/script/shell/
+    rsync --recursive --update --compress --verbose --out-format="script/shell/%n" "script/shell/" "$1:$(pwd)/script/shell/"
+    # script/sql/
+    ssh "$1" mkdir -p "$(pwd)"/script/sql/
+    rsync --recursive --update --compress --verbose --out-format="script/sql/%n" "script/sql/" "$1:$(pwd)/script/sql/"
+    # config/app/
+    if [[ -n "$(rsync --recursive --compress --dry-run --checksum --out-format="config/app/%n" "config/app/" "$1:$(pwd)/config/app/")" ]];then
+        echo -en "\n\033[31mlocal config/app/ diff to the remote, replace it ?(y/Y): \033[0m" && read -r confirm
+        if [[ "${confirm}" == "y" || "${confirm}" == "Y" ]];then
+            ssh "$1" mkdir -p "$(pwd)"/config/app/
+            rsync --recursive --update --compress --verbose --out-format="config/app/%n" "config/app/" "$1:$(pwd)/config/app/"
+        fi
+    fi
+    # config/cert/
+    if [[ -n "$(rsync --recursive --compress --dry-run --checksum --out-format="config/cert/%n" "config/cert/" "$1:$(pwd)/config/cert/")" ]];then
+        echo -en "\n\033[31mlocal config/cert/ diff to the remote, replace it ?(y/Y): \033[0m" && read -r confirm
+        if [[ "${confirm}" == "y" || "${confirm}" == "Y" ]];then
+            ssh "$1" mkdir -p "$(pwd)"/config/cert/
+            rsync --recursive --update --compress --verbose --out-format="config/cert/%n" "config/cert/" "$1:$(pwd)/config/cert/"
+        fi
+    fi
+    # config/src/
+    if [[ -n "$(rsync --recursive --compress --dry-run --checksum --out-format="config/src/%n" --exclude="*.config" "config/src/" "$1:$(pwd)/config/src/")" ]];then
+        echo -en "\n\033[31mlocal config/src/ diff to the remote, replace it ?(y/Y): \033[0m" && read -r confirm
+        if [[ "${confirm}" == "y" || "${confirm}" == "Y" ]];then
+            ssh "$1" mkdir -p "$(pwd)"/config/src/
+            rsync --recursive --update --compress --verbose --out-format="config/src/%n" --exclude="*.config" "config/src/" "$1:$(pwd)/config/src/"
+        fi
+    fi
+}
+
+function count_thread() {
+    ps -aux | pgrep -l "$1" | while read -r line;do
+        name=$(echo "${line}" | awk '{print $5}')
+        pid=$(echo "${line}" | awk '{print $1}')
+        number=$(grep "Thread" "/proc/${pid}/status" | awk '{print $NF}')
+        echo "${name} (pid: ${pid}): thread number: ${number}"
+    done;
+}
+
+function list() {
+    ps -aux | while read -r line;do
+        pid=$(echo "${line}" | awk '{print $2}')
+        [[ "${pid}" == "PID" ]] && echo -e "SortPrivate SortShare SortTotal Private Shared RAM Program" && continue;
+        private=$(grep "Private" "/proc/${pid}/smaps" 2>/dev/null | awk '{print $2}' | paste -sd "+" | bc | sed "s/$/*1024/" | bc | numfmt --to iec --format "%8.2f")
+        sort_private=$(grep "Private" "/proc/${pid}/smaps" 2>/dev/null | awk '{print $2}' | paste -sd "+" | bc | sed "s/$/*1024/" | bc)
+        share=$(grep "Share" "/proc/${pid}/smaps" 2>/dev/null | awk '{print $2}' | paste -sd "+" | bc | sed "s/$/*1024/" | bc | numfmt --to iec --format "%8.2f")
+        sort_share=$(grep "Share" "/proc/${pid}/smaps" 2>/dev/null | awk '{print $2}' | paste -sd "+" | bc | sed "s/$/*1024/" | bc)
+        total=$(grep "Pss" "/proc/${pid}/smaps" 2>/dev/null | awk '{print $2}' | paste -sd "+" | bc | sed "s/$/*1024/" | bc | numfmt --to iec --format "%8.2f")
+        sort_total=$(grep "Pss" "/proc/${pid}/smaps" 2>/dev/null | awk '{print $2}' | paste -sd "+" | bc | sed "s/$/*1024/" | bc)
+        if [[ -n "${private}" || -n "${share}" || -n "${total}" ]];then
+            program=$(echo "${line}" | awk '{print $11}')
+            program=$(basename "${program}" 2>/dev/null || echo "${program}")
+            echo -e "${sort_private} ${sort_share} ${sort_total} ${private} ${share} ${total} ${program}"
+        fi
+    done
+}
+
+function calculate_memory() {
+    list=$(list)
+    echo -e "${list}" | sort -n -k1 | awk '{print $4" "$5" "$6" "$7}' | column -t
+    private=$(echo -e "${list}" | awk '{print $1}' | tail -n +2 | paste -sd "+" | bc | numfmt --to iec --format "%8.2f")
+    share=$(echo -e "${list}" | awk '{print $2}' | tail -n +2 | paste -sd "+" | bc | numfmt --to iec --format "%8.2f")
+    total=$(echo -e "${list}" | awk '{print $3}' | tail -n +2 | paste -sd "+" | bc | numfmt --to iec --format "%8.2f")
+    echo -e "${private} ${share} ${total}" | column -t
+}
+
+function insatll_mirror() {
+    # rpm repo
+    # https://github.com/lest/prometheus-rpm
+    cat > /etc/yum.repos.d/prometheus.repo << EOF
+[prometheus]
+name=prometheus
+baseurl=https://packagecloud.io/prometheus-rpm/release/el/\$releasever/\$basearch
+repo_gpgcheck=1
+enabled=1
+gpgkey=https://packagecloud.io/prometheus-rpm/release/gpgkey
+       https://raw.githubusercontent.com/lest/prometheus-rpm/master/RPM-GPG-KEY-prometheus-rpm
+gpgcheck=1
+metadata_expire=300
+EOF
+    # update cache
+    dnf makecache
+    # grafana
+    dnf install grafana -y
+    systemctl start grafana
+    # prometheus
+    dnf install prometheus -y
+    # exporter
+    cat >> /etc/prometheus/prometheus.yml << EOF
+  - job_name: "node_exporter"
+    static_configs:
+      - targets: ["localhost:9100"]
+  - job_name: "mysqld_exporter"
+    static_configs:
+      - targets: ["localhost:9104"]
+  - job_name: "process_exporter"
+    static_configs:
+      - targets: ["localhost:9256"]
+EOF
+    systemctl start prometheus
+    # alert manager
+    dnf install alertmanager -y
+    systemctl start alertmanager
+}
+
+function install_expoeter() {
+    ## node expoeter ##
+    dnf install node_exporter -y
+    # start
+    systemctl start node_exporter
+    ## mysql exporter ##
+    dnf install mysqld_exporter -y
+    # mysql ini config
+    echo -n 'MYSQLD_EXPORTER_OPTS="--config.my-cnf=/etc/prometheus/mysqld_exporter.ini"' > /etc/default/mysqld_exporter
+    # mysql init config file
+    cat > /etc/prometheus/mysqld_exporter.ini << EOF
+[client]
+host=localhost
+socket=/var/lib/mysql/mysql.sock
+port=3306
+user=root
+password=root
+EOF
+    # start
+    systemctl start mysqld_exporter
+    ## process exporter ##
+    dnf install process_exporter -y
+    systemctl start process_exporter
+}
+
+function run_screen() {
+    [[ -z "$1" ]] && echo "name need" && exit
+    # name
+    screen -dmLS "$1"
+    if [[ -z "$2" ]];then
+        screen -r "$1"
+    else
+        screen -x -p 0 -S "$1" -X stuff "$2\n"
+    fi
+}
+
+function sp() {
+    tmux new -s "base" -d
+    tmux send-keys "tmux split-window -h" Enter
+    tmux send-keys "tmux select-pane -t 0" Enter
+    tmux send-keys "tmux set -g mouse on" Enter
+    tmux attach -t "base"
+}
+
+function e() {
+    tmux send-keys -t 1 "$*" Enter
+}
+
+function ssl_install() {
+    curl -s "${OPENSSL_ORG}" | grep -Po "(?<=\")openssl-\d+.*?\.tar\.gz(?=\")"
+    curl -s "${OPENSSL_ORG}" | grep -Po "(?<=\")openssl-fips-.*?\.tar\.gz(?=\")"
+    OPENSSL_ORG=https://www.openssl.org/source/
+    # install fips
+    wget --no-check-certificate "${OPENSSL_ORG}$2"
+    tar -xf "$2"
+    fips_name=$(basename "$2" .tar.gz)
+    cd "${fips_name}" || exit
+    ./config --prefix="${OPENSSL_DIR}" -fPIC
+    make -j 4
+    sudo make install
+    cd - || exit
+    # install openssl
+    wget --no-check-certificate "${OPENSSL_ORG}$1"
+    tar -xf "$1"
+    openssl_name=$(basename "$1" .tar.gz)
+    cd "${openssl_name}" || exit
+    ./config fips --with-fipsdir="${OPENSSL_DIR}" --prefix="${OPENSSL_DIR}" -fPIC ## linux-x86_64
+    make depend
+    make -j 4
+    sudo make install
+    cd - || exit
+    # clean
+    rm -rf "$1" "$2" "${fips_name}" "${openssl_name}"
+}
+
+function reset_context() {
+    if [[ -d "$1" ]];then
+        find "$1/"* | while read -r file;do
+            echo chcon --reference="." "${file}"
+            chcon --reference="." "${file}"
+        done
+    elif [[ -n "$1" ]];then
+        echo chcon --reference="$(dirname "$1")" "$1"
+        chcon --reference="$(dirname "$1")" "$1"
+    fi
+}
+
+function setup_alias() {
+    # [[ ! -f /etc/bash_completion.d/complete_alias ]] && wget https://raw.githubusercontent.com/cykerway/complete-alias/master/complete_alias -O /etc/bash_completion.d/complete_alias
+    [[ ! -f /etc/bash_completion.d/complete_alias ]] && wget https://raw.fastgit.org/cykerway/complete-alias/master/complete_alias -O /etc/bash_completion.d/complete_alias
+    chmod 644 /etc/bash_completion.d/complete_alias
+    cat >>~/.bashrc<<EOF
+
+alias l='ls -1 --color=auto'
+alias la='ls -lah --color=auto'
+alias ll='ls -lahZ --color=auto'
+
+complete -F _complete_alias l
+complete -F _complete_alias la
+complete -F _complete_alias ll
+
+# clear screen
+alias cls='printf "\033c"'
+
+# git
+alias ga='git add'
+alias gb='git branch'
+alias gck='git checkout'
+alias gcm='git commit -m'
+alias gd='git d'
+alias gdc='git d --cached'
+alias gl='git log'
+alias gp='git pull'
+alias gps='git push'
+alias gs='git status'
+alias gsc='git switch'
+
+# maker
+alias maker='_maker_alias(){ path=$(pwd); until [[ -z "${path}" ]];do { [[ -f "${path}/script/shell/maker.sh" ]] && { "${path}/script/shell/maker.sh" "$@"; return; } } || { path=$(echo "${path}" | sed -E "s/\/\w+\/?$//"); } done; echo "fatal: not a server repository"; }; _maker_alias'
+alias mk='maker'
+complete -F _maker mk
+
+# run
+alias run='_run_alias(){ path=$(pwd); until [[ -z "${path}" ]];do { [[ -f "${path}/script/shell/run.sh" ]] && { "${path}/script/shell/run.sh" "$@"; return; } } || { path=$(echo "${path}" | sed -E "s/\/\w+\/?$//"); } done; echo "fatal: not a server root repository"; }; _run_alias'
+complete -F _run run
+alias rs='run'
+complete -F _run rs
+
+EOF
+
+}
+
+
+func="$1"
+shift 1
+[[ -n "${func}" ]] && "${func}" "$@"
+
+
+## ------------------------------------------------------------------
+## database manage
+## ------------------------------------------------------------------
+
+## allow native password login
+# update user set plugin = 'mysql_native_password', authentication_string = PASSWORD('root') where user = 'root';
+## mariaDB
+# alter user 'root'@'localhost' IDENTIFIED BY 'root';
+# FLUSH PRIVILEGES;
+
+## 1698 (28000) plugin(auth_socket)
+# update user set plugin = 'mysql_native_password' where user = 'root';
+# FLUSH PRIVILEGES;
+
+## 1045 (28000) authentication_string(empty)
+# update user set authentication_string = PASSWORD('root') where user = 'root';
+# FLUSH PRIVILEGES;
+
+## mysql 8.x short password 
+# set global validate_password.check_user_name = 0;
+## 密码策略 LOW/MEDIUM/HIGH
+# set global validate_password.policy = 0;
+## 密码长度
+# set global validate_password.length = 0;
+## 特殊字符个数
+# set global validate_password.special_char_count = 0;
+## 数字个数
+# set global validate_password.number_count = 0;
+## 大小写个数
+# set global validate_password.mixed_case_count = 0;
+## 显示修改后的结果
+# show variables like '%validate_password%'; 
+
+
+
+## root account
+## short password for development use
+# ALTER USER 'root'@'%' IDENTIFIED  BY 'root';
+# FLUSH PRIVILEGES;
+
+## machine localhost account (optional)
+## create local user (use for unix socket login)
+# CREATE USER 'm'@'localhost' IDENTIFIED BY 'root';
+# GRANT ALL ON *.* TO 'm'@'localhost';
+# FLUSH PRIVILEGES;
+
+## game server account
+# CREATE USER 'game_prefix_'@'localhost' IDENTIFIED BY 'root';
+# GRANT ALL ON `game_prefix_%`.* TO 'game_prefix_'@'localhost';
+# FLUSH PRIVILEGES;
+
+## admin account (admin database and all game database)
+# CREATE USER 'admin'@'localhost' IDENTIFIED BY 'root';
+# GRANT ALL ON `admin`.* TO 'admin'@'localhost';
+# GRANT ALL ON `game_prefix_%`.* TO 'admin'@'localhost';
+# FLUSH PRIVILEGES;
+
+# DROP 'root'@'localhost'

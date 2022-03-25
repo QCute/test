@@ -1,0 +1,13 @@
+
+Time 2018-8-27 15:25:10
+Tag : error_report
+error in do_spawn_link_handler test_cmd
+Unknow Err {badrpc,nodedown}
+Time 2018-8-27 15:25:15
+Tag : error_report
+error in do_spawn_link_handler test_cmd
+Unknow Err {badrpc,nodedown}
+Time 2018-8-27 15:25:21
+Tag : error_report
+error in do_spawn_link_handler test_cmd
+Unknow Err {badrpc,nodedown}
